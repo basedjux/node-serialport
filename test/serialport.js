@@ -1,7 +1,7 @@
 'use strict';
-
-const sinon = require('sinon');
+const Buffer = require('safe-buffer').Buffer;
 const chai = require('chai');
+const sinon = require('sinon');
 chai.use(require('chai-subset'));
 const assert = chai.assert;
 
@@ -14,14 +14,12 @@ describe('SerialPort', () => {
   beforeEach(() => {
     SerialPort.Binding = mockBinding;
     sandbox = sinon.sandbox.create();
-
-    // Create a port for fun and profit
-    mockBinding.reset();
     mockBinding.createPort('/dev/exists', { echo: true, readyData: new Buffer(0) });
   });
 
   afterEach(() => {
     sandbox.restore();
+    mockBinding.reset();
   });
 
   describe('constructor', () => {
@@ -232,7 +230,7 @@ describe('SerialPort', () => {
 
       it('returns false when the port is opening', (done) => {
         const port = new SerialPort('/dev/exists', { autoOpen: false });
-        sandbox.stub(port.binding, 'open', () => {
+        sandbox.stub(port.binding, 'open').callsFake(() => {
           assert.isTrue(port.opening);
           assert.isFalse(port.isOpen);
           done();
@@ -249,7 +247,7 @@ describe('SerialPort', () => {
 
       it('returns false when the port is closing', (done) => {
         const port = new SerialPort('/dev/exists', {}, function() {
-          sandbox.stub(this.binding, 'close', () => {
+          sandbox.stub(this.binding, 'close').callsFake(() => {
             assert.isFalse(port.isOpen);
             done();
             return Promise.resolve();
@@ -297,7 +295,7 @@ describe('SerialPort', () => {
           stopBits: 1
         };
         const port = new SerialPort('/dev/exists', { autoOpen: false });
-        sandbox.stub(port.binding, 'open', (path, opt) => {
+        sandbox.stub(port.binding, 'open').callsFake((path, opt) => {
           assert.equal(path, '/dev/exists');
           assert.containSubset(opt, defaultOptions);
           done();
@@ -314,18 +312,17 @@ describe('SerialPort', () => {
       });
 
       it('emits data after being reopened', (done) => {
-        const data = new Buffer('Howdy!');
+        const data = Buffer.from('Howdy!');
         const port = new SerialPort('/dev/exists', () => {
           port.close(() => {
             port.open(() => {
-              port.binding.write(data, () => {
-              });
+              port.binding.emitData(data);
             });
           });
-        });
-        port.once('data', (res) => {
-          assert.deepEqual(res, data);
-          done();
+          port.once('data', (res) => {
+            assert.deepEqual(res, data);
+            done();
+          });
         });
       });
 
@@ -351,7 +348,7 @@ describe('SerialPort', () => {
 
       it('allows opening after an open error', (done) => {
         const port = new SerialPort('/dev/exists', { autoOpen: false });
-        const stub = sandbox.stub(port.binding, 'open', () => {
+        const stub = sandbox.stub(port.binding, 'open').callsFake(() => {
           return Promise.reject(new Error('Haha no'));
         });
         port.open((err) => {
@@ -364,11 +361,11 @@ describe('SerialPort', () => {
 
     describe('#write', () => {
       it('writes to the bindings layer', (done) => {
-        const data = new Buffer('Crazy!');
+        const data = Buffer.from('Crazy!');
         const port = new SerialPort('/dev/exists');
         port.on('open', () => {
           port.write(data, () => {
-            assert.deepEqual(data, port.binding.port.lastWrite);
+            assert.deepEqual(data, port.binding.lastWrite);
             done();
           });
         });
@@ -379,8 +376,8 @@ describe('SerialPort', () => {
         port.on('open', () => {
           const data = 'Crazy!';
           port.write(data, () => {
-            const lastWrite = port.binding.port.lastWrite;
-            assert.deepEqual(new Buffer(data), lastWrite);
+            const lastWrite = port.binding.lastWrite;
+            assert.deepEqual(Buffer.from(data), lastWrite);
             done();
           });
         });
@@ -391,8 +388,8 @@ describe('SerialPort', () => {
         port.on('open', () => {
           const data = 'COFFEE';
           port.write(data, 'hex', () => {
-            const lastWrite = port.binding.port.lastWrite;
-            assert.deepEqual(new Buffer(data, 'hex'), lastWrite);
+            const lastWrite = port.binding.lastWrite;
+            assert.deepEqual(Buffer.from(data, 'hex'), lastWrite);
             done();
           });
         });
@@ -403,8 +400,8 @@ describe('SerialPort', () => {
         port.on('open', () => {
           const data = [0, 32, 44, 88];
           port.write(data, () => {
-            const lastWrite = port.binding.port.lastWrite;
-            assert.deepEqual(new Buffer(data), lastWrite);
+            const lastWrite = port.binding.lastWrite;
+            assert.deepEqual(Buffer.from(data), lastWrite);
             done();
           });
         });
@@ -422,9 +419,9 @@ describe('SerialPort', () => {
         port.open(() => {
           port.cork();
           port.write('abc');
-          port.write(new Buffer('123'), () => {
+          port.write(Buffer.from('123'), () => {
             assert.equal(spy.callCount, 1);
-            assert.deepEqual(port.binding.port.lastWrite, new Buffer('abc123'));
+            assert.deepEqual(port.binding.lastWrite, Buffer.from('abc123'));
             done();
           });
           port.uncork();
@@ -503,7 +500,7 @@ describe('SerialPort', () => {
 
       it('handles errors in callback', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'close', () => {
+        sinon.stub(port.binding, 'close').callsFake(() => {
           return Promise.reject(new Error('like tears in the rain'));
         });
         port.on('open', () => {
@@ -516,7 +513,7 @@ describe('SerialPort', () => {
 
       it('handles errors in event', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'close', () => {
+        sinon.stub(port.binding, 'close').callsFake(() => {
           return Promise.reject(new Error('attack ships on fire off the shoulder of Orion'));
         });
         port.on('open', () => {
@@ -571,7 +568,7 @@ describe('SerialPort', () => {
 
       it('handles errors in callback', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'update', () => {
+        sinon.stub(port.binding, 'update').callsFake(() => {
           return Promise.reject(new Error('like tears in the rain'));
         });
         port.on('open', () => {
@@ -584,7 +581,7 @@ describe('SerialPort', () => {
 
       it('handles errors in event', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'update', () => {
+        sinon.stub(port.binding, 'update').callsFake(() => {
           return Promise.reject(new Error('attack ships on fire off the shoulder of Orion'));
         });
         port.on('open', () => {
@@ -681,7 +678,7 @@ describe('SerialPort', () => {
 
       it('handles errors in callback', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'set', () => {
+        sinon.stub(port.binding, 'set').callsFake(() => {
           return Promise.reject(new Error('like tears in the rain'));
         });
         port.on('open', () => {
@@ -694,7 +691,7 @@ describe('SerialPort', () => {
 
       it('handles errors in event', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'set', () => {
+        sinon.stub(port.binding, 'set').callsFake(() => {
           return Promise.reject(new Error('attack ships on fire off the shoulder of Orion'));
         });
         port.on('open', () => {
@@ -730,7 +727,7 @@ describe('SerialPort', () => {
 
       it('handles errors in callback', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'flush', () => {
+        sinon.stub(port.binding, 'flush').callsFake(() => {
           return Promise.reject(new Error('like tears in the rain'));
         });
         port.on('open', () => {
@@ -743,7 +740,7 @@ describe('SerialPort', () => {
 
       it('handles errors in event', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'flush', () => {
+        sinon.stub(port.binding, 'flush').callsFake(() => {
           return Promise.reject(new Error('attack ships on fire off the shoulder of Orion'));
         });
         port.on('open', () => {
@@ -757,12 +754,13 @@ describe('SerialPort', () => {
     });
 
     describe('#drain', () => {
-      it('errors when port is not open', (done) => {
+      it('waits for an open port', (done) => {
         const port = new SerialPort('/dev/exists', { autoOpen: false });
         port.drain((err) => {
-          assert.instanceOf(err, Error);
+          assert.isNull(err);
           done();
         });
+        port.open();
       });
 
       it('calls drain on the bindings', (done) => {
@@ -779,7 +777,7 @@ describe('SerialPort', () => {
 
       it('handles errors in callback', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'drain', () => {
+        sinon.stub(port.binding, 'drain').callsFake(() => {
           return Promise.reject(new Error('like tears in the rain'));
         });
         port.on('open', () => {
@@ -792,7 +790,7 @@ describe('SerialPort', () => {
 
       it('handles errors in event', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'drain', () => {
+        sinon.stub(port.binding, 'drain').callsFake(() => {
           return Promise.reject(new Error('attack ships on fire off the shoulder of Orion'));
         });
         port.on('open', () => {
@@ -800,6 +798,19 @@ describe('SerialPort', () => {
         });
         port.on('error', (err) => {
           assert.instanceOf(err, Error);
+          done();
+        });
+      });
+
+      it('waits for in progress or queued writes to finish', (done) => {
+        const port = new SerialPort('/dev/exists');
+        port.on('error', done);
+        let finishedWrite = false;
+        port.write(Buffer.alloc(10), () => {
+          finishedWrite = true;
+        });
+        port.drain(() => {
+          assert.isTrue(finishedWrite);
           done();
         });
       });
@@ -832,7 +843,7 @@ describe('SerialPort', () => {
 
       it('handles errors in callback', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'get', () => {
+        sinon.stub(port.binding, 'get').callsFake(() => {
           return Promise.reject(new Error('like tears in the rain'));
         });
         port.on('open', () => {
@@ -845,7 +856,7 @@ describe('SerialPort', () => {
 
       it('handles errors in event', (done) => {
         const port = new SerialPort('/dev/exists');
-        sinon.stub(port.binding, 'get', () => {
+        sinon.stub(port.binding, 'get').callsFake(() => {
           return Promise.reject(new Error('attack ships on fire off the shoulder of Orion'));
         });
         port.on('open', () => {
@@ -861,40 +872,30 @@ describe('SerialPort', () => {
 
   describe('reading data', () => {
     it('emits data events by default', (done) => {
-      const testData = new Buffer('I am a really short string');
+      const testData = Buffer.from('I am a really short string');
       const port = new SerialPort('/dev/exists', () => {
         port.once('data', (recvData) => {
           assert.deepEqual(recvData, testData);
           done();
         });
-        port.binding.write(testData, () => {});
+        port.binding.write(testData);
       });
     });
   });
 
-  describe('disconnections', () => {
-    it('emits a disconnect event and closes the port', (done) => {
-      const port = new SerialPort('/dev/exists', () => {
-        assert.isTrue(port.isOpen);
-        port.binding.disconnect();
+  describe('disconnect close errors', () => {
+    it('emits as a disconnected close event on a bad read', (done) => {
+      const port = new SerialPort('/dev/exists');
+      sinon.stub(port.binding, 'read').callsFake(() => {
+        return Promise.reject(new Error('EBAD_ERR'));
       });
-      const spy = sandbox.spy();
-      port.on('disconnect', spy);
-      port.on('close', () => {
-        assert.isFalse(port.isOpen);
-        assert.isTrue(spy.calledOnce);
+      port.on('close', (err) => {
+        assert.instanceOf(err, Error);
+        assert.isTrue(err.disconnected);
         done();
       });
-    });
-
-    it(`doesn't disconnect a closed port`, (done) => {
-      const port = new SerialPort('/dev/exists', { autoOpen: false });
-      const spy = sandbox.spy();
-      port.on('disconnect', spy);
-      port.on('close', spy);
-      port.binding.disconnect();
-      assert.equal(spy.callCount, 0);
-      done();
+      port.on('error', done); // this shouldn't be called
+      port.read();
     });
   });
 });

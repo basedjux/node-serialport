@@ -1,9 +1,9 @@
-/* eslint-disable require-path-exists/exists */
+/* eslint-disable node/no-missing-require */
 'use strict';
 
 // `npm run stress` to run these tests
 
-const assert = require('chai').assert;
+const Buffer = require('safe-buffer').Buffer;
 const util = require('util');
 const SerialPort = require('../../');
 require('colors'); // this modifies String.prototype
@@ -34,7 +34,7 @@ describe('the stress', () => {
     }
 
     it("doesn't leak memory", (done) => {
-      const data = new Buffer(1024);
+      const data = Buffer.alloc(1024);
       const hd = new memwatch.HeapDiff();
       const port = new SerialPort(testPort, {}, false);
       port.on('close', done);

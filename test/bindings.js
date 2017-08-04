@@ -1,7 +1,6 @@
 'use strict';
 /* eslint-disable no-new */
-
-const assert = require('chai').assert;
+const Buffer = require('safe-buffer').Buffer;
 
 let platform;
 switch (process.platform) {
@@ -35,17 +34,20 @@ const defaultSetFlags = Object.freeze({
   rts: true
 });
 
+const listFields = [
+  'comName',
+  'manufacturer',
+  'serialNumber',
+  'pnpId',
+  'locationId',
+  'vendorId',
+  'productId'
+];
+
 const bindingsToTest = [
   'mock',
   platform
 ];
-
-function parseDisabled(envStr) {
-  return (envStr || '').split(',').reduce((disabled, feature) => {
-    disabled[feature] = true;
-    return disabled;
-  }, {});
-}
 
 function disconnect(err) {
   throw (err || new Error('Unknown disconnection'));
@@ -55,33 +57,31 @@ function disconnect(err) {
 // The echo firmware should respond with this data when it's
 // ready to echo. This allows for remote device bootup.
 // the default firmware is called arduinoEcho.ino
-const readyData = new Buffer('READY');
+const readyData = Buffer.from('READY');
 
 // Test our mock binding and the binding for the platform we're running on
 bindingsToTest.forEach((bindingName) => {
-  const binding = require(`../lib/bindings/${bindingName}`);
+  const Binding = require(`../lib/bindings/${bindingName}`);
   let testPort = process.env.TEST_PORT;
-  let disabledFeatures = parseDisabled(process.env.DISABLE_PORT_FEATURE);
 
   if (bindingName === 'mock') {
     testPort = '/dev/exists';
-    binding.createPort(testPort, { echo: true, readyData });
-    disabledFeatures = {};
   }
 
   // eslint-disable-next-line no-use-before-define
-  testBinding(bindingName, binding, testPort, disabledFeatures);
+  testBinding(bindingName, Binding, testPort);
 });
 
-function testBinding(bindingName, Binding, testPort, disabledFeatures) {
-  function testFeature(feature, description, callback) {
-    if (disabledFeatures[feature]) {
-      return it(`Feature "${feature}" has been disabled. "${description}"`);
-    }
-    it(description, callback);
-  }
+function testBinding(bindingName, Binding, testPort) {
+  const testFeature = makeTestFeature(bindingName);
 
   describe(`bindings/${bindingName}`, () => {
+    before(() => {
+      if (bindingName === 'mock') {
+        Binding.createPort(testPort, { echo: true, readyData });
+      }
+    });
+
     describe('static method', () => {
       describe('.list', () => {
         it('returns an array', () => {
@@ -91,16 +91,18 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
         });
 
         it('has objects with undefined when there is no data', () => {
-          return Binding.list().then((data) => {
-            assert.isArray(data);
-            if (data.length === 0) {
+          return Binding.list().then((ports) => {
+            assert.isArray(ports);
+            if (ports.length === 0) {
               console.log('no ports to test');
               return;
             }
-            const obj = data[0];
-            Object.keys(obj).forEach((key) => {
-              assert.notEqual(obj[key], '', 'empty values should be undefined');
-              assert.isNotNull(obj[key], 'empty values should be undefined');
+            ports.forEach(port => {
+              assert.containSubset(Object.keys(port), listFields);
+              Object.keys(port).forEach((key) => {
+                assert.notEqual(port[key], '', 'empty values should be undefined');
+                assert.isNotNull(port[key], 'empty values should be undefined');
+              });
             });
           });
         });
@@ -113,15 +115,6 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
           disconnect
         });
         assert.instanceOf(binding, Binding);
-      });
-
-      it('throws when missing disconnect callback', (done) => {
-        try {
-          new Binding({ });
-        } catch (e) {
-          assert.instanceOf(e, TypeError);
-          done();
-        }
       });
 
       it('throws when not given an options object', (done) => {
@@ -219,6 +212,22 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
 
         testFeature('baudrate.25000', 'supports a custom baudRate of 25000', () => {
           const customRates = Object.assign({}, defaultOpenOptions, { baudRate: 25000 });
+          return binding.open(testPort, customRates).then(() => {
+            assert.equal(binding.isOpen, true);
+            return binding.close();
+          });
+        });
+
+        testFeature('baudrate.1000000', 'supports a custom baudRate of 1000000', () => {
+          const customRates = Object.assign({}, defaultOpenOptions, { baudRate: 1000000 });
+          return binding.open(testPort, customRates).then(() => {
+            assert.equal(binding.isOpen, true);
+            return binding.close();
+          });
+        });
+
+        testFeature('baudrate.250000', 'supports a custom baudRate of 1000000', () => {
+          const customRates = Object.assign({}, defaultOpenOptions, { baudRate: 250000 });
           return binding.open(testPort, customRates).then(() => {
             assert.equal(binding.isOpen, true);
             return binding.close();
@@ -340,12 +349,6 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
         it('updates baudRate', () => {
           return binding.update({ baudRate: 57600 });
         });
-
-        testFeature('baudrate.25000', 'updates baudRate to a custom rate', () => {
-          return binding.update({ baudRate: 25000 }).then(() => {
-            return binding.update({ baudRate: defaultOpenOptions.baudRate });
-          });
-        });
       });
 
       describe('#write', () => {
@@ -354,7 +357,7 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
             disconnect
           });
           let noZalgo = false;
-          binding.write(new Buffer([])).catch((err) => {
+          binding.write(Buffer.from([])).catch((err) => {
             assert.instanceOf(err, Error);
             assert(noZalgo);
             done();
@@ -390,13 +393,13 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
         afterEach(() => binding.close());
 
         it('resolves after a small write', () => {
-          const data = new Buffer('simple write of 24 bytes');
+          const data = Buffer.from('simple write of 24 bytes');
           return binding.write(data);
         });
 
-        it('resolves after a large write', function() {
+        it('resolves after a large write (2k)', function() {
           this.timeout(20000);
-          const data = new Buffer(1024 * 5);
+          const data = Buffer.alloc(1024 * 2);
           return binding.write(data);
         });
       });
@@ -432,6 +435,17 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
 
         it('drains the port', () => {
           return binding.drain();
+        });
+
+        it('waits for in progress writes to finish', function(done) {
+          this.timeout(10000);
+          let finishedWrite = false;
+          binding.write(Buffer.alloc(1024 * 2)).then(() => {
+            finishedWrite = true;
+          }).catch(done);
+          binding.drain(() => {
+            assert.isTrue(finishedWrite);
+          }).then(done, done);
         });
       });
 
@@ -520,7 +534,7 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
       describe('#read', () => {
         it('errors asynchronously when not open', (done) => {
           const binding = new Binding({ disconnect });
-          const buffer = new Buffer(5);
+          const buffer = Buffer.alloc(5);
           let noZalgo = false;
           binding.read(buffer, 0, buffer.length).catch((err) => {
             assert.instanceOf(err, Error);
@@ -537,7 +551,7 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
 
         let binding, buffer;
         beforeEach(() => {
-          buffer = new Buffer(readyData.length);
+          buffer = Buffer.alloc(readyData.length);
           binding = new Binding({ disconnect });
           return binding.open(testPort, defaultOpenOptions);
         });
@@ -591,11 +605,6 @@ function testBinding(bindingName, Binding, testPort, disabledFeatures) {
           });
         });
       });
-    });
-
-    describe('disconnections', () => {
-      it('calls disconnect callback only when detected on a read');
-      it('calls disconnect callback only when detected on a write');
     });
   });
 };
